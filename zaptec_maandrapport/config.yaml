@@ -1,5 +1,5 @@
 name: "Zaptec maandrapport"
-version: "1.0.0"
+version: "1.0.1"
 slug: "zaptec_maandrapport"
 description: "Maakt maandelijks een Excel-export van Zaptec-laadsessies en verstuurt deze via Gmail."
 arch:

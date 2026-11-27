@@ -4,11 +4,12 @@ Zaptec monthly charge-session report for a Home Assistant OS local add-on.
 
 Schedule:
   - First day of each month, at the configured local time.
-  - Reports sessions whose local startDateTime belongs to the previous month.
-Manual test:
-  - Create /share/zaptec_maandrapport/nu-uitvoeren.txt
-    (for example from the Terminal add-on: touch /share/zaptec_maandrapport/nu-uitvoeren.txt)
-  - The add-on notices it within approximately 30 seconds and sends the report.
+  - First day: sends the previous calendar month's report.
+  - Manual current-month report:
+    create /share/zaptec_maandrapport/nu-uitvoeren-lopende-maand.txt
+  - Manual previous-month report:
+    create /share/zaptec_maandrapport/nu-uitvoeren.txt
+  - The add-on notices a trigger within approximately 30 seconds.
 """
 
 from __future__ import annotations
@@ -39,6 +40,7 @@ SHARE_DIR = Path("/share/zaptec_maandrapport")
 OPTIONS_FILE = DATA_DIR / "options.json"
 LAST_RUN_FILE = DATA_DIR / "last_successful_month.txt"
 MANUAL_TRIGGER_FILE = SHARE_DIR / "nu-uitvoeren.txt"
+CURRENT_MONTH_TRIGGER_FILE = SHARE_DIR / "nu-uitvoeren-lopende-maand.txt"
 
 logging.basicConfig(
     level=os.getenv("LOG_LEVEL", "INFO").upper(),
@@ -253,6 +255,7 @@ def get_archived_sessions(
 def make_workbook(
     sessions: list[dict[str, Any]],
     start_local: datetime,
+    period_end: datetime,
     month_label: str,
     tz: ZoneInfo,
     output_path: Path,
@@ -274,10 +277,11 @@ def make_workbook(
     summary["A1"].fill = title_fill
     summary.merge_cells("A1:B1")
     summary["A3"] = "Rapportperiode"
-    summary["B3"] = start_local.strftime("%d-%m-%Y") + " t/m " + (
-        (start_local.replace(day=28) + timedelta(days=4)).replace(day=1)
-        - timedelta(days=1)
-    ).strftime("%d-%m-%Y")
+    summary["B3"] = (
+        start_local.strftime("%d-%m-%Y")
+        + " t/m "
+        + (period_end - timedelta(microseconds=1)).strftime("%d-%m-%Y")
+    )
     summary["A4"] = "Aantal laadsessies"
     summary["B4"] = len(sessions)
     summary["A5"] = "Totaal geladen"
@@ -389,24 +393,33 @@ def send_email(opts: dict[str, Any], file_path: Path, month_label: str, count: i
     log.info("Rapport verstuurd naar %s", recipient)
 
 
-def create_and_send_report(opts: dict[str, Any]) -> str:
+def create_and_send_report(opts: dict[str, Any], current_month: bool = False) -> str:
     tz = ZoneInfo(opts.get("timezone", "Europe/Amsterdam"))
     now_local = datetime.now(tz)
-    start_local, _end_local, month_label = previous_month_bounds(now_local)
 
-    log.info("Laadsessies ophalen voor %s (installatie %s)", month_label, opts["installation_id"])
+    if current_month:
+        start_local = now_local.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        period_end = now_local + timedelta(microseconds=1)
+        month_label = now_local.strftime("%Y-%m") + "-tot-" + now_local.strftime("%Y-%m-%d")
+        subject_label = now_local.strftime("%Y-%m") + " (t/m " + now_local.strftime("%d-%m-%Y") + ")"
+        filename = f"Zaptec_laadrapport_lopende_maand_{now_local:%Y-%m-%d}.xlsx"
+    else:
+        start_local, period_end, month_label = previous_month_bounds(now_local)
+        subject_label = month_label
+        filename = f"Zaptec_laadrapport_{month_label}.xlsx"
+
+    log.info("Laadsessies ophalen voor %s (installatie %s)", subject_label, opts["installation_id"])
     sessions = get_archived_sessions(opts, start_local, now_local)
 
     SHARE_DIR.mkdir(parents=True, exist_ok=True)
-    filename = f"Zaptec_laadrapport_{month_label}.xlsx"
     output_path = SHARE_DIR / filename
 
     count, kwh = make_workbook(
-        sessions, start_local, month_label, tz, output_path
+        sessions, start_local, period_end, subject_label, tz, output_path
     )
     log.info("Excelbestand aangemaakt: %s (%s sessies, %.2f kWh)", output_path, count, kwh)
 
-    send_email(opts, output_path, month_label, count, kwh)
+    send_email(opts, output_path, subject_label, count, kwh)
     return month_label
 
 
@@ -431,22 +444,29 @@ def main() -> None:
                 minute=int(opts.get("report_minute", 0)),
             )
 
-            manual = MANUAL_TRIGGER_FILE.exists()
+            manual_previous = MANUAL_TRIGGER_FILE.exists()
+            manual_current = CURRENT_MONTH_TRIGGER_FILE.exists()
             scheduled = now.day == 1 and now.time().replace(tzinfo=None) >= target_time
 
-            if manual or scheduled:
+            if manual_current:
+                log.info("Lopende-maandrapport handmatig starten.")
+                create_and_send_report(opts, current_month=True)
+                CURRENT_MONTH_TRIGGER_FILE.unlink(missing_ok=True)
+                log.info("Lopende-maandrapport succesvol verstuurd.")
+
+            if manual_previous or scheduled:
                 _, _, month_label = previous_month_bounds(now)
-                if already_sent(month_label) and not manual:
+                if already_sent(month_label) and not manual_previous:
                     log.debug("Rapport %s is deze maand al succesvol verstuurd.", month_label)
                 else:
                     log.info(
                         "Rapport starten (%s).",
-                        "handmatige test" if manual else "maandplanning",
+                        "handmatige test" if manual_previous else "maandplanning",
                     )
-                    sent_month = create_and_send_report(opts)
+                    sent_month = create_and_send_report(opts, current_month=False)
                     mark_sent(sent_month)
-                    if manual and MANUAL_TRIGGER_FILE.exists():
-                        MANUAL_TRIGGER_FILE.unlink()
+                    if manual_previous:
+                        MANUAL_TRIGGER_FILE.unlink(missing_ok=True)
                     log.info("Rapportage %s succesvol afgerond.", sent_month)
 
         except Exception:

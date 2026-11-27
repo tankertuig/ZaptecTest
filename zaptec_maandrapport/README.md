@@ -54,3 +54,29 @@ De app controleert iedere 30 seconden de tijd. Op de eerste dag van de maand van
 
 ## Logboeken
 Bekijk de logboeken via **Instellingen → Apps → Zaptec maandrapport → Logboeken**.
+
+
+## Lopende maand tussentijds opvragen
+
+Naast het automatische rapport van de vorige kalendermaand kun je nu op elk
+moment een rapport van de lopende maand laten versturen. Het rapport loopt
+vanaf de eerste dag van deze maand tot het moment waarop je het uitvoert.
+
+Maak via de Terminal/SSH-add-on dit bestand aan:
+
+```sh
+touch /share/zaptec_maandrapport/nu-uitvoeren-lopende-maand.txt
+```
+
+Binnen ongeveer 30 seconden wordt een Excelbestand gemaakt en per e-mail
+verstuurd. Het bestand krijgt een naam met de datum van uitvoering, zodat
+meerdere tussentijdse rapporten elkaar niet overschrijven.
+
+Het bestaande commando blijft werken voor een handmatige export van de
+vorige kalendermaand:
+
+```sh
+touch /share/zaptec_maandrapport/nu-uitvoeren.txt
+```
+
+Na aanpassen van de code moet je de add-on opnieuw bouwen/herstarten.
